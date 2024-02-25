@@ -63,3 +63,17 @@ int main() {
 
     return 0;
 }
+
+
+
+
+/*
+Chương trình nhận một gói tin từ nạn nhân.
+Nó kiểm tra xem gói tin có phải từ nạn nhân không bằng cách so sánh địa chỉ MAC nguồn trong header Ethernet với địa chỉ MAC của nạn nhân.
+Nếu gói tin không từ nạn nhân, chương trình sẽ bỏ qua gói tin và tiếp tục vòng lặp.
+Nếu gói tin từ nạn nhân, chương trình sẽ thay đổi địa chỉ MAC đích trong header Ethernet thành địa chỉ MAC của gateway.
+Chương trình sau đó chuyển tiếp gói tin đến gateway.
+Chương trình sau đó thay đổi địa chỉ MAC nguồn trong header Ethernet thành địa chỉ MAC của kẻ tấn công và địa chỉ MAC đích thành địa chỉ MAC của nạn nhân.
+Cuối cùng, chương trình chuyển tiếp gói tin trở lại nạn nhân.
+*/
+
